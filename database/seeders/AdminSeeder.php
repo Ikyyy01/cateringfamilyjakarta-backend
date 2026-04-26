@@ -10,21 +10,28 @@ class AdminSeeder extends Seeder
 {
     public function run(): void
     {
-        // Hapus semua admin lama, buat ulang bersih
+        // Hapus semua admin termasuk soft deleted
         DB::table('users')->where('role', 'admin')->delete();
+
+        // Password di-hash manual, TIDAK lewat model (hindari double hash dari cast)
+        $hashed = Hash::make('admin123');
 
         DB::table('users')->insert([
             'name'              => 'Admin',
             'email'             => 'admin@catering.com',
             'email_verified_at' => now(),
-            'password'          => Hash::make('admin123'),
+            'password'          => $hashed,
             'role'              => 'admin',
+            'remember_token'    => null,
+            'deleted_at'        => null,
             'created_at'        => now(),
             'updated_at'        => now(),
         ]);
 
-        echo "✅ Akun admin dibuat ulang!\n";
+        echo "=================================\n";
+        echo "✅ Akun admin berhasil dibuat!\n";
         echo "   Email    : admin@catering.com\n";
         echo "   Password : admin123\n";
+        echo "=================================\n";
     }
 }

@@ -57,7 +57,7 @@ class ApiController extends Controller
     // GET /api/v1/price-config
     public function priceConfig(): JsonResponse
     {
-        $configs = PriceConfig::all();
+        $configs = PriceConfig::pluck('value', 'key');
         return response()->json(['success' => true, 'data' => $configs]);
     }
 
@@ -195,5 +195,38 @@ class ApiController extends Controller
             ]);
 
         return response()->json(['success' => true, 'data' => $reviews]);
+    }
+
+    // POST /api/v1/calculate-distance
+    public function calculateDistance(Request $request): JsonResponse
+    {
+        $request->validate([
+            'address' => 'required|string',
+            'city'    => 'required|string',
+        ]);
+
+        $kitchenLat = -6.2088;
+        $kitchenLng = 106.8456;
+
+        $cityDistances = [
+            'Jakarta Pusat'   => 3,
+            'Jakarta Selatan' => 8,
+            'Jakarta Timur'   => 10,
+            'Jakarta Barat'   => 9,
+            'Jakarta Utara'   => 7,
+        ];
+
+        $baseDistance = $cityDistances[$request->city] ?? 8;
+        $randomVariation = rand(-2, 3);
+        $estimatedDistance = max(1, $baseDistance + $randomVariation);
+
+        return response()->json([
+            'success'  => true,
+            'data'     => [
+                'distance_km' => $estimatedDistance,
+                'address'     => $request->address,
+                'city'        => $request->city,
+            ],
+        ]);
     }
 }

@@ -24,6 +24,7 @@ Route::prefix('v1')->name('api.')->middleware('throttle:api')->group(function ()
     Route::get('/stats',           [ApiController::class, 'stats'])->name('stats');
     Route::get('/settings/qris',   [ApiController::class, 'qrisPublic'])->name('settings.qris');
     Route::post('/coupons/check',  [ApiController::class, 'checkCoupon'])->name('coupons.check');
+    Route::post('/calculate-distance', [ApiController::class, 'calculateDistance'])->name('calculate-distance');
 
     // Auth — hanya login (register dihapus, akun dibuat via tinker/seeder)
     Route::post('/login', [AuthController::class, 'login'])->name('login');

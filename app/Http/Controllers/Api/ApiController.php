@@ -12,6 +12,7 @@ use App\Models\PriceConfig;
 use App\Models\Review;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 
 class ApiController extends Controller
@@ -84,7 +85,7 @@ class ApiController extends Controller
     public function qrisPublic(): JsonResponse
     {
         $path        = AppSetting::get('qris_image');
-        $whatsapp    = AppSetting::get('whatsapp_number', '6281234567890');
+        $whatsapp    = AppSetting::get('whatsapp_number', '083177176908');
         $qrisUrl     = null;
 
         if ($path && Storage::disk('public')->exists($path)) {
@@ -197,36 +198,142 @@ class ApiController extends Controller
         return response()->json(['success' => true, 'data' => $reviews]);
     }
 
+    public function addressSuggestions(Request $request): JsonResponse
+    {
+        $request->validate([
+            'query' => 'required|string|min:3',
+            'city'  => 'nullable|string',
+        ]);
+
+        $city = $request->string('city')->toString();
+        $query = trim($request->string('query')->toString());
+        $search = trim($query . ($city ? ', ' . $city : '') . ', DKI Jakarta, Indonesia');
+
+        $response = Http::timeout(15)
+            ->withHeaders([
+                'User-Agent' => 'CateringFamilyJakarta/1.0',
+                'Accept' => 'application/json',
+            ])
+            ->get('https://photon.komoot.io/api/', [
+                'q' => $search,
+                'limit' => 5,
+                'lang' => 'id',
+            ]);
+
+        if (!$response->successful()) {
+            return response()->json(['success' => false, 'message' => 'Gagal mengambil saran alamat.'], 502);
+        }
+
+        $features = collect($response->json('features', []))
+            ->map(function ($feature) {
+                $props = $feature['properties'] ?? [];
+                $coords = $feature['geometry']['coordinates'] ?? [null, null];
+                $parts = array_filter([
+                    $props['name'] ?? null,
+                    $props['street'] ?? null,
+                    $props['district'] ?? null,
+                    $props['city'] ?? null,
+                    $props['state'] ?? null,
+                ]);
+
+                return [
+                    'label' => implode(', ', array_unique($parts)),
+                    'address' => implode(', ', array_unique($parts)),
+                    'latitude' => isset($coords[1]) ? (float) $coords[1] : null,
+                    'longitude' => isset($coords[0]) ? (float) $coords[0] : null,
+                ];
+            })
+            ->filter(fn($item) => $item['address'] && $item['latitude'] && $item['longitude'])
+            ->values();
+
+        return response()->json(['success' => true, 'data' => $features]);
+    }
+
     // POST /api/v1/calculate-distance
     public function calculateDistance(Request $request): JsonResponse
     {
         $request->validate([
             'address' => 'required|string',
-            'city'    => 'required|string',
+            'city' => 'required|string',
+            'latitude' => 'nullable|numeric',
+            'longitude' => 'nullable|numeric',
         ]);
 
-        $kitchenLat = -6.2088;
-        $kitchenLng = 106.8456;
+        $fullAddress = trim($request->address . ', ' . $request->city . ', DKI Jakarta, Indonesia');
+        $kitchenLat = -6.1050;
+        $kitchenLng = 106.9453;
 
-        $cityDistances = [
-            'Jakarta Pusat'   => 3,
-            'Jakarta Selatan' => 8,
-            'Jakarta Timur'   => 10,
-            'Jakarta Barat'   => 9,
-            'Jakarta Utara'   => 7,
-        ];
+        $destinationLat = $request->filled('latitude') ? (float) $request->latitude : null;
+        $destinationLng = $request->filled('longitude') ? (float) $request->longitude : null;
 
-        $baseDistance = $cityDistances[$request->city] ?? 8;
-        $randomVariation = rand(-2, 3);
-        $estimatedDistance = max(1, $baseDistance + $randomVariation);
+        if (!$destinationLat || !$destinationLng) {
+            $response = Http::timeout(15)
+                ->withHeaders([
+                    'User-Agent' => 'CateringFamilyJakarta/1.0',
+                    'Accept' => 'application/json',
+                ])
+                ->get('https://nominatim.openstreetmap.org/search', [
+                    'q' => $fullAddress,
+                    'format' => 'jsonv2',
+                    'limit' => 1,
+                    'countrycodes' => 'id',
+                ]);
+
+            if (!$response->successful()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Gagal menghubungi layanan geocoding.',
+                ], 502);
+            }
+
+            $results = $response->json();
+            if (empty($results[0]['lat']) || empty($results[0]['lon'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Alamat tidak ditemukan. Coba lengkapi alamat dengan lebih detail.',
+                ], 422);
+            }
+
+            $destinationLat = (float) $results[0]['lat'];
+            $destinationLng = (float) $results[0]['lon'];
+        }
+
+        $routeResponse = Http::timeout(20)
+            ->withHeaders([
+                'User-Agent' => 'CateringFamilyJakarta/1.0',
+                'Accept' => 'application/json',
+            ])
+            ->get("https://router.project-osrm.org/route/v1/driving/{$kitchenLng},{$kitchenLat};{$destinationLng},{$destinationLat}", [
+                'overview' => 'false',
+            ]);
+
+        if ($routeResponse->successful() && ($routeResponse->json('routes.0.distance') !== null)) {
+            $distanceKm = ((float) $routeResponse->json('routes.0.distance')) / 1000;
+        } else {
+            $distanceKm = $this->haversineDistance($kitchenLat, $kitchenLng, $destinationLat, $destinationLng);
+        }
 
         return response()->json([
-            'success'  => true,
-            'data'     => [
-                'distance_km' => $estimatedDistance,
-                'address'     => $request->address,
-                'city'        => $request->city,
+            'success' => true,
+            'data' => [
+                'distance_km' => round($distanceKm, 1),
+                'address' => $fullAddress,
+                'latitude' => $destinationLat,
+                'longitude' => $destinationLng,
             ],
         ]);
+    }
+
+    private function haversineDistance(float $lat1, float $lon1, float $lat2, float $lon2): float
+    {
+        $earthRadius = 6371;
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLon = deg2rad($lon2 - $lon1);
+        $a = sin($dLat / 2) * sin($dLat / 2)
+            + cos(deg2rad($lat1)) * cos(deg2rad($lat2))
+            * sin($dLon / 2) * sin($dLon / 2);
+        $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+
+        return $earthRadius * $c;
     }
 }

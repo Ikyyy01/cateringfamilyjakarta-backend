@@ -4,15 +4,19 @@ namespace App\Listeners;
 
 use App\Events\OrderStatusChanged;
 use App\Notifications\OrderStatusChangedNotification;
+use App\Services\FonnteService;
 
 class SendOrderStatusNotification
 {
+    public function __construct(
+        private FonnteService $fonnteService
+    ) {}
+
     public function handle(OrderStatusChanged $event): void
     {
         $order = $event->order;
         $order->load('user');
 
-        // Kirim notifikasi ke customer
         if ($order->user) {
             $order->user->notify(new OrderStatusChangedNotification(
                 $order,
@@ -21,7 +25,6 @@ class SendOrderStatusNotification
             ));
         }
 
-        // Catatan: activity log dicatat di controller sebelum event di-fire,
-        // bukan di sini, agar tidak terjadi duplikasi log.
+        $this->fonnteService->sendOrderStatusMessage($order);
     }
 }

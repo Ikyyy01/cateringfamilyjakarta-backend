@@ -32,7 +32,7 @@ return new class extends Migration
             ],
             [
                 'key'         => 'whatsapp_number',
-                'value'       => '6281234567890',
+                'value'       => '083177176908',
                 'type'        => 'string',
                 'label'       => 'Nomor WhatsApp',
                 'description' => 'Nomor WA yang ditampilkan di halaman pembayaran (format: 628xxx)',
